@@ -1,0 +1,24 @@
+--cpu Cortex-M3
+"focv1\startup_stm32f103xb.o"
+"focv1\main.o"
+"focv1\stm32f1xx_it.o"
+"focv1\stm32f1xx_hal_msp.o"
+"focv1\stm32f1xx_hal_gpio_ex.o"
+"focv1\stm32f1xx_hal_i2c.o"
+"focv1\stm32f1xx_hal.o"
+"focv1\stm32f1xx_hal_rcc.o"
+"focv1\stm32f1xx_hal_rcc_ex.o"
+"focv1\stm32f1xx_hal_gpio.o"
+"focv1\stm32f1xx_hal_dma.o"
+"focv1\stm32f1xx_hal_cortex.o"
+"focv1\stm32f1xx_hal_pwr.o"
+"focv1\stm32f1xx_hal_flash.o"
+"focv1\stm32f1xx_hal_flash_ex.o"
+"focv1\stm32f1xx_hal_exti.o"
+"focv1\stm32f1xx_hal_tim.o"
+"focv1\stm32f1xx_hal_tim_ex.o"
+"focv1\system_stm32f1xx.o"
+--strict --scatter "FOCv1\FOCv1.sct"
+--summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list "FOCv1.map" -o FOCv1\FOCv1.axf
