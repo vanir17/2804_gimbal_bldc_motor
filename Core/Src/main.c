@@ -18,24 +18,42 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "math.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "stdint.h"
+#include "stdbool.h"
+#include "as5600.h"
+#include "math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef struct 
+{
+	uint8_t pole_pairs;
+	float voltage_power;
+	float voltage_limit;
+	
+	float zero_offset_angle;
+	float rotation_direction;
+	
+	float angle_as5600;
+	float angle_electrical;
+	
+	float duty_a;
+	float duty_b;
+	float duty_c;	
+}FOC_Controller_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define VOLTAGE_POWER 12.0f   
-#define VOLTAGE_LIMIT 4.5f    
-#define PWM_PERIOD    3600
-
+#define VOLTAGE_POWER 12.0f
+#define VOLTAGE_LIMIT 6.0f
+#define PWM_ARR_PERIOD 1799
+#define POLE_PAIRS    7
+#define M_PI 3.14159
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,7 +67,7 @@ I2C_HandleTypeDef hi2c1;
 TIM_HandleTypeDef htim1;
 
 /* USER CODE BEGIN PV */
-
+FOC_Controller_t foc_motor;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -58,32 +76,128 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
-
+float normalize_angle(float angle);
+void FOC_init(FOC_Controller_t *foc, uint8_t pole_pairs, float v_dc, float v_limit);
+void FOC_update_electrical_angle(FOC_Controller_t *foc, float mech_angle_rad);
+void FOC_step(FOC_Controller_t *foc, float Vq, float Vd);
+void FOC_align_sensor(FOC_Controller_t *foc);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void setPWM(float Ua, float Ub, float Uc) {
-    uint32_t dc_a = (uint32_t)((Ua / VOLTAGE_POWER) * PWM_PERIOD);
-    uint32_t dc_b = (uint32_t)((Ub / VOLTAGE_POWER) * PWM_PERIOD);
-    uint32_t dc_c = (uint32_t)((Uc / VOLTAGE_POWER) * PWM_PERIOD);
+float normalize_angle(float angle)
+{
+	float a = fmodf(angle, 2.0f * M_PI);
+	return a < 0.0f ? (a + 2.0f * M_PI) : a;
+}
+	
+void FOC_init(FOC_Controller_t *foc, uint8_t pole_pairs, float v_dc, float v_limit)
+{
+	foc->pole_pairs = pole_pairs;
+	foc->voltage_power = v_dc;
+	foc->voltage_limit = v_limit;
+	foc->zero_offset_angle = 0.0f;
+	foc->rotation_direction = 1; //1:forward, -1: inverse
+	foc->duty_a = 0.5f;
+	foc->duty_b = 0.5f;
+	foc->duty_c = 0.5f;
+	
+	//set the motor at rest
+}
+void FOC_update_electrical_angle(FOC_Controller_t *foc, float mech_angle_rad)
+{
+	foc->angle_as5600 = mech_angle_rad;
+	
+	float raw_electrical = (foc->rotation_direction * foc->angle_as5600 *(float)foc->pole_pairs) - foc->zero_offset_angle;
+	foc->angle_electrical = normalize_angle(raw_electrical);	
+}
+void FOC_step(FOC_Controller_t *foc, float Vq, float Vd)
+{
+	if (Vq > foc->voltage_limit)  Vq = foc->voltage_limit;
+  if (Vq < -foc->voltage_limit) Vq = -foc->voltage_limit;
+  if (Vd > foc->voltage_limit)  Vd = foc->voltage_limit;
+  if (Vd < -foc->voltage_limit) Vd = -foc->voltage_limit;
+	
+	//INVERSE PARK TRANSFORMATION
+	float sin_e = sinf(foc->angle_electrical);
+	float cos_e = cosf(foc->angle_electrical);
+	
+	float V_alpha = Vd * cos_e - Vq * sin_e;
+	float V_beta = Vd * sin_e + Vq * cos_e;
+	
+	//INVERSE CLARKE TRANSFORMATION
+	float Va = V_alpha;
+	float Vb = -0.5f * V_alpha + 0.86602540378f * V_beta; //0.866 = sqrt(3) / 2
+	float Vc = -0.5f * V_alpha - 0.86602540378f * V_beta;
+	
+	//SPACE VECTOR PWM
+	float Vmax = Va;
+	if(Vb > Vmax)
+	{
+		Vmax = Vb;
+	}
+	if(Vc > Vmax) 
+	{
+		Vmax = Vc;
+	}
+	
+	float Vmin = Va;
+	if(Vb < Vmin)
+	{
+		Vmin = Vb;
+	}
+	if(Vc < Vmin)
+	{
+		Vmin = Vc;
+	}
+	
+	//Offset
+	float Voffset = 0.5f * (Vmax + Vmin);
+	
+	Va -= Voffset;
+	Vb -= Voffset;
+	Vc -= Voffset;
+	
+	//Duty Cycle 0.0 -> 1.0
+	foc->duty_a = (Va / foc-> voltage_power) + 0.5f;
+	foc->duty_b = (Vb / foc-> voltage_power) + 0.5f;
+	foc->duty_c = (Vc / foc-> voltage_power) + 0.5f;
 
-    if (dc_a > PWM_PERIOD) dc_a = PWM_PERIOD;
-    if (dc_b > PWM_PERIOD) dc_b = PWM_PERIOD;
-    if (dc_c > PWM_PERIOD) dc_c = PWM_PERIOD;
-
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, dc_a);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, dc_b);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, dc_c);
+	//Ensure the Duty cycle always at 0.0 -> 1.0
+	if(foc->duty_a > 1.0f) foc->duty_a = 1.0f;
+	else if(foc->duty_a < 0.0f) foc->duty_a = 0.0f;
+	
+	if(foc->duty_b > 1.0f) foc->duty_b = 1.0f;
+	else if(foc->duty_b < 0.0f) foc->duty_b = 0.0f;
+	
+	if(foc->duty_c > 1.0f) foc->duty_c = 1.0f;
+	else if(foc->duty_c < 0.0f) foc->duty_c = 0.0f;
 }
 
-void OpenLoop_Velocity(float electrical_angle, float voltage) {
-    float Ua = (voltage / 2.0f) * (sinf(electrical_angle) + 1.0f);
-    float Ub = (voltage / 2.0f) * (sinf(electrical_angle - 2.0944f) + 1.0f);
-    float Uc = (voltage / 2.0f) * (sinf(electrical_angle + 2.0944f) + 1.0f);
-
-    setPWM(Ua, Ub, Uc);
+void FOC_align_sensor(FOC_Controller_t *foc)
+{
+		foc->angle_electrical = 0.0f;
+		FOC_step(foc, 0.0f, 2.0f);
+	
+		for(int i = 0; i < 1000; i++)
+		{
+			TIM1->CCR1 = (uint32_t)(foc->duty_a * (float)PWM_ARR_PERIOD);
+      TIM1->CCR2 = (uint32_t)(foc->duty_b * (float)PWM_ARR_PERIOD);
+      TIM1->CCR3 = (uint32_t)(foc->duty_c * (float)PWM_ARR_PERIOD);
+			
+			HAL_Delay(1);
+		}
+		
+		float sensor_raw = AS5600_GetAngleRad(&hi2c1);
+		foc->zero_offset_angle = normalize_angle(foc->rotation_direction * sensor_raw * (float)foc->pole_pairs);
+		
+		FOC_step(foc, 0.0f, 0.0f);
+    TIM1->CCR1 = (uint32_t)(foc->duty_a * (float)PWM_ARR_PERIOD);
+    TIM1->CCR2 = (uint32_t)(foc->duty_b * (float)PWM_ARR_PERIOD);
+    TIM1->CCR3 = (uint32_t)(foc->duty_c * (float)PWM_ARR_PERIOD);
+    HAL_Delay(200);
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -118,31 +232,35 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
 
+	/*init motor*/
+	FOC_init(&foc_motor, POLE_PAIRS, VOLTAGE_POWER, VOLTAGE_LIMIT);
+	
+	/*init TIM1*/
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-
 	__HAL_TIM_MOE_ENABLE(&htim1);
-	float electrical_angle = 0.0f;
-	float speed = 0.3f;
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
+	HAL_Delay(10);
+	FOC_align_sensor(&foc_motor);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-		electrical_angle += speed;
-    
-    if (electrical_angle >= 6.2832f) {
-        electrical_angle -= 6.2832f;
-    }
+		float current_mechanical_angle = AS5600_GetAngleRad(&hi2c1);
+		
+		FOC_update_electrical_angle(&foc_motor, current_mechanical_angle);
+		
+		FOC_step(&foc_motor, 0.5f, 0.0f);
 
-    OpenLoop_Velocity(electrical_angle, VOLTAGE_LIMIT);
-
-    // 3. Delay d? ki?m soát t?n s? c?p nh?t
-    HAL_Delay(1);
+		TIM1->CCR1 = (uint32_t)(foc_motor.duty_a * (float)PWM_ARR_PERIOD);
+    TIM1->CCR2 = (uint32_t)(foc_motor.duty_b * (float)PWM_ARR_PERIOD);
+    TIM1->CCR3 = (uint32_t)(foc_motor.duty_c * (float)PWM_ARR_PERIOD);
+		
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -245,11 +363,11 @@ static void MX_TIM1_Init(void)
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
-  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 3599;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_CENTERALIGNED1;
+  htim1.Init.Period = 1799;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
-  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
