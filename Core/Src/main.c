@@ -45,6 +45,17 @@ typedef struct
 	float duty_b;
 	float duty_c;	
 }FOC_Controller_t;
+
+typedef struct 
+{
+	float Kp, Ki, Kd;
+	float integral;
+	float integral_limit;
+	float prev_error;
+	float output_limit;
+	uint32_t prev_time; //ms
+}PID_Controller_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -68,6 +79,8 @@ TIM_HandleTypeDef htim1;
 
 /* USER CODE BEGIN PV */
 FOC_Controller_t foc_motor;
+PID_Controller_t pos_pid;
+float target_angle = 0.0f; //rad - [0; 2pi]
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -81,6 +94,9 @@ void FOC_init(FOC_Controller_t *foc, uint8_t pole_pairs, float v_dc, float v_lim
 void FOC_update_electrical_angle(FOC_Controller_t *foc, float mech_angle_rad);
 void FOC_step(FOC_Controller_t *foc, float Vq, float Vd);
 void FOC_align_sensor(FOC_Controller_t *foc);
+void PID_init(PID_Controller_t *pid, float Kp, float Ki, float Kd, float output_limit);
+float PID_compute(PID_Controller_t *pid, float setpoint, float measurement);
+float normalize_angle_error(float error);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -90,7 +106,51 @@ float normalize_angle(float angle)
 	float a = fmodf(angle, 2.0f * M_PI);
 	return a < 0.0f ? (a + 2.0f * M_PI) : a;
 }
+
+float normalize_angle_error(float error)
+{
+	  while (error > M_PI)  error -= 2.0f * M_PI;
+    while (error < -M_PI) error += 2.0f * M_PI;
+    return error;
+}
+
+void PID_init(PID_Controller_t *pid, float Kp, float Ki, float Kd, float output_limit)
+{
+	  pid->Kp = Kp;
+    pid->Ki = Ki;
+    pid->Kd = Kd;
+    pid->integral = 0.0f;
+    pid->integral_limit = output_limit;
+    pid->prev_error = 0.0f;
+    pid->output_limit = output_limit;
+    pid->prev_time = HAL_GetTick();
+}
+float PID_compute(PID_Controller_t *pid, float setpoint, float measurement)
+{
+	uint32_t now = HAL_GetTick();
+	float dt = (now - pid->prev_time) / 1000.0f;
+	if(dt <= 0.0f) dt = 0.001f;
+	pid->prev_time = now;
 	
+	float error = normalize_angle_error(setpoint - measurement);
+	
+	//Ki
+	pid->integral += error * dt;
+  if (pid->integral >  pid->integral_limit) pid->integral =  pid->integral_limit;
+  if (pid->integral < -pid->integral_limit) pid->integral = -pid->integral_limit;
+	
+	//Kp
+	float derivative = (error - pid->prev_error) / dt;
+	pid->prev_error = error;
+	
+	//Output
+	float output = pid->Kp * error + pid->integral * pid->Ki + pid->Kd * derivative;
+	
+	if (output >  pid->output_limit) output =  pid->output_limit;
+  if (output < -pid->output_limit) output = -pid->output_limit;
+	
+	return output;
+}
 void FOC_init(FOC_Controller_t *foc, uint8_t pole_pairs, float v_dc, float v_limit)
 {
 	foc->pole_pairs = pole_pairs;
@@ -102,7 +162,7 @@ void FOC_init(FOC_Controller_t *foc, uint8_t pole_pairs, float v_dc, float v_lim
 	foc->duty_b = 0.5f;
 	foc->duty_c = 0.5f;
 	
-	//set the motor at rest
+	//set the motor rest
 }
 void FOC_update_electrical_angle(FOC_Controller_t *foc, float mech_angle_rad)
 {
@@ -244,7 +304,8 @@ int main(void)
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
 	HAL_Delay(10);
 	FOC_align_sensor(&foc_motor);
-
+	PID_init(&pos_pid, 3.0f, 0.0f, 0.08f, VOLTAGE_LIMIT);
+	target_angle = AS5600_GetAngleRad(&hi2c1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -252,10 +313,11 @@ int main(void)
   while (1)
   {
 		float current_mechanical_angle = AS5600_GetAngleRad(&hi2c1);
+		float Vq = PID_compute(&pos_pid, target_angle, current_mechanical_angle);
 		
 		FOC_update_electrical_angle(&foc_motor, current_mechanical_angle);
 		
-		FOC_step(&foc_motor, 0.5f, 0.0f);
+		FOC_step(&foc_motor, Vq, 0.0f);
 
 		TIM1->CCR1 = (uint32_t)(foc_motor.duty_a * (float)PWM_ARR_PERIOD);
     TIM1->CCR2 = (uint32_t)(foc_motor.duty_b * (float)PWM_ARR_PERIOD);
