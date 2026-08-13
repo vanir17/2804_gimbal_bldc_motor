@@ -400,6 +400,11 @@
               <FilePath>.\as5600.c</FilePath>
             </File>
             <File>
+              <FileName>FOC.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\FOC.c</FilePath>
+            </File>
+            <File>
               <FileName>main.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/main.c</FilePath>

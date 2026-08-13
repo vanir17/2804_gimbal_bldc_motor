@@ -1,6 +1,7 @@
 --cpu Cortex-M3
 "focv1\startup_stm32f103xb.o"
 "focv1\as5600.o"
+"focv1\foc.o"
 "focv1\main.o"
 "focv1\stm32f1xx_it.o"
 "focv1\stm32f1xx_hal_msp.o"
