@@ -26,6 +26,7 @@
 #include "as5600.h"
 #include "math.h"
 #include "FOC.h"
+#include "IMP_CTRL.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,6 +49,8 @@ typedef struct
 	uint32_t prev_time; //ms
 }PID_Controller_t;
 
+	
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -68,7 +71,6 @@ TIM_HandleTypeDef htim1;
 /* USER CODE BEGIN PV */
 FOC_Controller_t foc_motor;
 PID_Controller_t pos_pid;
-float target_angle = 0.0f; //rad - [0; 2pi]
 
 //plot values
 float  current_mechanical_angle = 0.0f;
@@ -81,11 +83,13 @@ float current_Vq = 0.0f;
  ******************************************************************************/
 PID_Controller_t vel_pid;
 Velocity_Estimator_t vel_est;
-float target_velocity = 31.4159f;
 float current_velocity = 0.0f;
 uint32_t control_loop_timer = 0;
 
-
+Impedance_Controller_t imp_ctrl;
+float target_angle = 0.0f;
+Angle_Unwrapper_t angle_unw;
+float cont_angle = 0.0f;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -222,6 +226,9 @@ float PID_compute_linear(PID_Controller_t *pid, float setpoint, float measuremen
 }
 
 
+
+
+
 /* USER CODE END 0 */
 
 /**
@@ -271,35 +278,34 @@ int main(void)
 
 
 	/*******************************************************************************
- * PID velocity
+ * Impedance control init
  ******************************************************************************/
- VelEst_init(&vel_est, 0.01f);
- PID_init(&vel_pid, 0.2f, 0.7f, 0.0f, VOLTAGE_LIMIT);
+	float raw_init = AS5600_GetAngleRad(&hi2c1);
+	Angle_Unwrapper_Init(&angle_unw, raw_init);
+	Impedance_Init(&imp_ctrl, 2.0f, 0.05f, VOLTAGE_LIMIT);
 
+	target_angle = angle_unw.continuous_angle;
+	imp_ctrl.prev_pos = target_angle;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-		uint32_t now = HAL_GetTick();
+
+		float raw_angle = AS5600_GetAngleRad(&hi2c1);
+		cont_angle = Angle_Unwrapper_Update(&angle_unw, raw_angle);
+
+		FOC_update_electrical_angle(&foc_motor, raw_angle);
+
+		float Vq = Impedance_Compute(&imp_ctrl, target_angle, 0.0f, cont_angle);
+        
+    FOC_step(&foc_motor, Vq, 0.0f);
+
+		TIM1->CCR1 = (uint32_t)(foc_motor.duty_a * (float)PWM_ARR_PERIOD);
+		TIM1->CCR2 = (uint32_t)(foc_motor.duty_b * (float)PWM_ARR_PERIOD);
+		TIM1->CCR3 = (uint32_t)(foc_motor.duty_c * (float)PWM_ARR_PERIOD);
       
-      if (now - control_loop_timer >= 2)
-      {
-          control_loop_timer = now;
-
-          current_mechanical_angle = AS5600_GetAngleRad(&hi2c1);
-          
-          current_velocity = VelEst_update(&vel_est, current_mechanical_angle);
-          current_Vq = PID_compute_linear(&vel_pid, target_velocity, current_velocity);
-          
-          FOC_update_electrical_angle(&foc_motor, current_mechanical_angle);
-          FOC_step(&foc_motor, current_Vq, 0.0f);
-
-          TIM1->CCR1 = (uint32_t)(foc_motor.duty_a * (float)PWM_ARR_PERIOD);
-          TIM1->CCR2 = (uint32_t)(foc_motor.duty_b * (float)PWM_ARR_PERIOD);
-          TIM1->CCR3 = (uint32_t)(foc_motor.duty_c * (float)PWM_ARR_PERIOD);
-      }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

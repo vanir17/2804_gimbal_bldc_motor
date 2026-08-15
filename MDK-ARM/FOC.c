@@ -33,7 +33,7 @@ void FOC_init(FOC_Controller_t *foc, uint8_t pole_pairs, float v_dc, float v_lim
 void FOC_align_sensor(FOC_Controller_t *foc)
 {
 		foc->angle_electrical = 0.0f;
-		FOC_step(foc, 0.0f, 2.0f);
+		FOC_step(foc, 0.0f, 3.5f);
 	
 		for(int i = 0; i < 1000; i++)
 		{

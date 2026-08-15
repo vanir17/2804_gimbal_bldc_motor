@@ -1,4 +1,4 @@
-focv1/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
+focv1/imp_ctrl.o: IMP_CTRL.c ..\Core\Inc\IMP_CTRL.h \
   ..\Drivers\STM32F1xx_HAL_Driver\Inc\stm32f1xx_hal.h \
   ..\Core\Inc\stm32f1xx_hal_conf.h \
   ..\Drivers\STM32F1xx_HAL_Driver\Inc\stm32f1xx_hal_rcc.h \
@@ -21,4 +21,4 @@ focv1/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
   ..\Drivers\STM32F1xx_HAL_Driver\Inc\stm32f1xx_hal_pwr.h \
   ..\Drivers\STM32F1xx_HAL_Driver\Inc\stm32f1xx_hal_tim.h \
   ..\Drivers\STM32F1xx_HAL_Driver\Inc\stm32f1xx_hal_tim_ex.h \
-  ..\Core\Inc\as5600.h ..\Core\Inc\FOC.h ..\Core\Inc\IMP_CTRL.h
+  ..\Core\Inc\main.h ..\Core\Inc\as5600.h ..\Core\Inc\FOC.h
